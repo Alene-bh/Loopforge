@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <link rel="icon" href="./favicon.ico?v=1" type="image/x-icon">
+  <link rel="shortcut icon" href="./favicon.ico?v=1" type="image/x-icon">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <title>Loopforge</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+
+    <section id="mainMenu" class="screen active">
+      <div class="menu-bg-grid"></div>
+      <div id="menuParticles" class="menu-particles"></div>
+      <div class="menu-card">
+        <div class="game-logo">
+          <span class="forge-mark">∞</span>
+          <h1>LOOPFORGE</h1>
+          <p>Construí caminos. Instalá máquinas. Resolvé fábricas cada vez más difíciles.</p>
+        </div>
+
+        <div class="menu-buttons">
+          <button id="playBtn" class="menu-btn primary">JUGAR</button>
+          <button id="tutorialBtn" class="menu-btn">TUTORIAL</button>
+          <button id="ranksBtn" class="menu-btn">RANGOS</button>
+          <button id="accountBtn" class="menu-btn">CUENTA</button>
+          <button id="leaderboardBtn" class="menu-btn">LEADERBOARD</button>
+          <button id="optionsBtn" class="menu-btn">OPCIONES</button>
+        </div>
+
+        <div class="menu-footer">Prototype v27 · Unranked Badge</div>
+      </div>
+    </section>
+
+    <section id="tutorialMenu" class="screen">
+      <div class="panel-window big-window tutorial-window">
+        <div class="window-title">
+          <span>Tutorial</span>
+          <button class="small-btn" data-screen="mainMenu">VOLVER</button>
+        </div>
+
+        <div class="tutorial-layout">
+          <div class="tutorial-list" id="tutorialList"></div>
+          <div class="tutorial-info">
+            <h2 id="tutorialTitle">Tutorial</h2>
+            <p id="tutorialDescription"></p>
+            <div class="tutorial-goals" id="tutorialGoals"></div>
+            <button id="startTutorialBtn" class="menu-btn primary">EMPEZAR</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="ranksMenu" class="screen">
+      <div class="panel-window big-window ranks-window">
+        <div class="window-title">
+          <span>Rangos</span>
+          <button class="small-btn" data-screen="mainMenu">VOLVER</button>
+        </div>
+
+        <div class="ranks-layout ranks-layout-v15">
+          <div class="ranks-path-title">Camino de rangos</div>
+          <div id="ranksList" class="ranks-list ranks-track"></div>
+
+          <div class="ranks-note ranks-explainer">
+            <h3>Cómo funciona ranked</h3>
+            <p><b>Ganás ELO</b> cuando resolvés un reto exacto. Si encadenás victorias, la racha aumenta la ganancia.</p>
+            <p><b>Perdés ELO</b> cuando una run termina sin vidas. No volvés a cero: seguís cerca de tu nivel real.</p>
+            <p><b>La dificultad escala</b> con tu ELO: aparecen nuevas máquinas, mapas más compactos, límite de cintas, casillas bloqueadas y restricciones de construcción.</p>
+            <p><b>Loopforger</b> es el rango final: llegar ahí significa dominar lógica, optimización y precisión.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+
+    <section id="accountMenu" class="screen">
+      <div class="panel-window big-window account-window">
+        <div class="window-title">
+          <span>Cuenta</span>
+          <button class="small-btn" data-screen="mainMenu">VOLVER</button>
+        </div>
+
+        <div id="accountContent" class="account-content"></div>
+      </div>
+    </section>
+
+    <section id="leaderboardMenu" class="screen">
+      <div class="panel-window big-window leaderboard-window">
+        <div class="window-title">
+          <span>Leaderboard</span>
+          <button class="small-btn" data-screen="mainMenu">VOLVER</button>
+        </div>
+
+        <div id="leaderboardContent" class="leaderboard-content"></div>
+      </div>
+    </section>
+
+    <section id="gameScreen" class="screen">
+      <div class="game-shell">
+
+        <header class="game-hud">
+          <div class="hud-left">
+            <button id="backToMenuBtn" class="icon-btn">☰</button>
+            <div>
+              <div class="hud-title">LOOPFORGE</div>
+              <div id="hudLevel" class="hud-subtitle">Modo infinito</div>
+            </div>
+          </div>
+
+          <div class="hud-center">
+            <div class="objective-label">OBJETIVO</div>
+            <div id="hudObjective" class="objective-number">100 ENERGÍA / 10 CICLOS</div>
+          </div>
+
+          <div class="hud-right">
+            <div id="rankCard" class="rank-card rank-iron">
+              <div class="rank-card-header">
+                <div class="hud-rank-icon-wrap">
+                  <img id="hudRankBadge" class="hud-rank-badge" src="assets/ranks/iron.png" alt="Rango actual">
+                </div>
+                <div class="rank-top">
+                  <span id="rankName">Hierro</span>
+                  <b id="eloText">100</b>
+                </div>
+              </div>
+              <div class="rank-bar">
+                <div id="rankFill" class="rank-fill"></div>
+              </div>
+              <div class="rank-bottom">
+                <span id="rankProgressText">0 / 100</span>
+              </div>
+            </div>
+
+            <div class="hud-stat lives-stat">
+              <span>VIDAS</span>
+              <b id="livesText">♥♥♥</b>
+            </div>
+
+            <div class="hud-stat">
+              <span>TOTAL</span>
+              <b id="totalText">0</b>
+            </div>
+          </div>
+        </header>
+
+        <main class="playfield">
+
+          <aside class="machine-shop">
+            <div class="shop-title">CONSTRUIR</div>
+
+            <div class="tool-card selected" data-tool="belt">
+              <div class="tool-icon belt-tool"></div>
+              <div>
+                <strong>Cinta</strong>
+                <span>Crea camino.</span>
+              </div>
+            </div>
+
+            <div class="tool-card" data-tool="eraser">
+              <div class="tool-icon erase-tool">
+                <span class="eraser-shape"></span>
+              </div>
+              <div>
+                <strong>Borrar</strong>
+                <span>Borra casillas.</span>
+              </div>
+            </div>
+
+            <div class="shop-title machines-title">MÁQUINAS</div>
+            <div id="machinePalette" class="machine-palette"></div>
+
+            <div class="shop-help" id="shopHelp">
+              Click para elegir.
+              <br />
+              Click en el tablero para colocar.
+              <br />
+              Arrastrá para dibujar cinta.
+            </div>
+          </aside>
+
+          <section class="factory-zone">
+            <div class="factory-topbar">
+              <div class="factory-name">
+                <span class="red-dot"></span>
+                <span id="factoryName">Tablero de fábrica</span>
+              </div>
+              <div id="quickData" class="quick-data">
+                <span><b>INICIO</b> <em id="quickStartText">0</em></span>
+                <span><b>CICLOS</b> <em id="quickCyclesText">0</em></span>
+                <span><b>OBJ</b> <em id="quickTargetText">0</em></span>
+              </div>
+              <div id="gameStatus" class="game-status"></div>
+            </div>
+
+            <div class="factory-floor" id="factoryFloor">
+              <div id="tutorialCoach" class="tutorial-coach hidden">
+                <button id="coachCloseBtn" class="coach-close" title="Cerrar ayuda">×</button>
+                <div class="coach-kicker">TUTORIAL</div>
+                <h3 id="coachTitle">Objetivo</h3>
+                <p id="coachText">Seguí las instrucciones para aprender.</p>
+                <div id="coachSteps" class="coach-steps"></div>
+              </div>
+
+              <div id="grid" class="grid"></div>
+              <div id="energyLayer" class="energy-layer"></div>
+            </div>
+
+            <div class="control-deck">
+              <div class="control-left">
+                <button id="stopBtn" class="game-btn stop" disabled>PARAR</button>
+                <button id="resetBtn" class="game-btn">REINICIAR</button>
+                <button id="clearBtn" class="game-btn danger">VACIAR</button>
+              </div>
+
+              <div class="control-right">
+                <button id="speedBtn" class="game-btn speed">VEL x1</button>
+                <button id="runBtn" class="game-btn run">SIMULAR</button>
+              </div>
+            </div>
+          </section>
+
+          <aside class="data-panel">
+            <div class="panel-window compact-window">
+              <div class="window-title">Datos</div>
+              <div id="modifierBox" class="modifier-box"></div>
+              <div class="result-grid">
+                <div class="result-row">
+                  <span>Ciclo</span>
+                  <b id="cycleText">0/10</b>
+                </div>
+                <div class="result-row">
+                  <span>Última</span>
+                  <b id="lastOrbText">0</b>
+                </div>
+                <div class="result-row">
+                  <span>Diferencia</span>
+                  <b id="diffText">-</b>
+                </div>
+                <div class="result-row">
+                  <span>Camino</span>
+                  <b id="pathText">0</b>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel-window log-window">
+              <div class="window-title">Registro</div>
+              <div id="log" class="log"></div>
+            </div>
+          </aside>
+
+        </main>
+      </div>
+    </section>
+
+    <div id="scoreFlyLayer" class="score-fly-layer"></div>
+
+    <div id="unlockModal" class="modal hidden">
+      <div class="modal-card unlock-card">
+        <div class="unlock-kicker">NUEVA MÁQUINA</div>
+        <div id="unlockMachineSprite" class="unlock-machine-sprite"></div>
+        <h2 id="unlockMachineName">Máquina</h2>
+        <p id="unlockMachineText">Descripción.</p>
+        <button id="unlockCloseBtn" class="menu-btn primary">ENTENDIDO</button>
+      </div>
+    </div>
+
+    <div id="rankUpModal" class="modal hidden">
+      <div class="modal-card rank-up-card">
+        <div class="rank-up-kicker">ASCENSO DE RANGO</div>
+        <div class="rank-up-badge-wrap">
+          <img id="rankUpBadge" class="rank-up-badge" src="assets/ranks/iron.png" alt="Nuevo rango">
+        </div>
+        <h2 id="rankUpTitle">Nuevo rango</h2>
+        <p id="rankUpText">Subiste de rango.</p>
+        <button id="rankUpContinueBtn" class="menu-btn primary">CONTINUAR</button>
+      </div>
+    </div>
+
+    <div id="modal" class="modal hidden">
+      <div class="modal-card">
+        <h2 id="modalTitle">Sistema perfecto</h2>
+        <p id="modalText"></p>
+        <div class="modal-buttons">
+          <button id="modalNextBtn" class="menu-btn primary">SIGUIENTE</button>
+          <button id="modalRetryBtn" class="menu-btn">REINTENTAR</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="optionsModal" class="modal hidden options-modal">
+      <div class="modal-card options-card">
+        <div class="options-header">
+          <div>
+            <div class="options-kicker">LOOPFORGE</div>
+            <h2>Opciones</h2>
+          </div>
+          <button id="optionsCloseBtn" class="options-close" title="Cerrar">×</button>
+        </div>
+
+        <div class="options-section">
+          <div class="option-row">
+            <div>
+              <strong>Música de menú</strong>
+              <span>Suena en menú, tutorial y rangos.</span>
+            </div>
+            <button id="menuMusicToggle" class="switch-toggle active" type="button" aria-label="Activar música de menú">
+              <span></span>
+            </button>
+          </div>
+
+          <div class="option-row">
+            <div>
+              <strong>Música de juego</strong>
+              <span>Solo suena cuando estás jugando.</span>
+            </div>
+            <button id="gameMusicToggle" class="switch-toggle active" type="button" aria-label="Activar música de juego">
+              <span></span>
+            </button>
+          </div>
+
+          <div class="option-slider-row">
+            <div class="volume-topline">
+              <strong>Volumen</strong>
+              <b id="volumeValue">70%</b>
+            </div>
+            <input id="volumeSlider" class="volume-slider" type="range" min="0" max="100" value="70">
+          </div>
+        </div>
+
+        <div class="options-actions">
+          <button id="resumeBtn" class="menu-btn primary">REANUDAR</button>
+          <button id="optionsMenuBtn" class="menu-btn">IR AL MENÚ</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
