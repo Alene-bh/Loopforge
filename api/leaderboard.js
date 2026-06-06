@@ -1,18 +1,20 @@
-const { redis, setJson, getSessionUser, getRankName, getWinrate } = require("./_lib/redis");
+const { redis, key, setJson, getSessionUser, getRankName, getWinrate } = require("./_lib/redis");
 
 module.exports = async function handler(req, res) {
   try {
     const me = await getSessionUser(req);
     if (!me) return setJson(res, 401, { error: "No autenticado" });
 
-    const ids = await redis(["SMEMBERS", "players"]);
+    const ids = await redis(["SMEMBERS", key("players")]);
     const players = [];
 
     for (const id of ids || []) {
-      const raw = await redis(["GET", `user:${id}`]);
+      const raw = await redis(["GET", key(`user:${id}`)]);
       if (!raw) continue;
+
       const user = JSON.parse(raw);
       const stats = user.stats || {};
+
       players.push({
         id: user.id,
         name: user.username,

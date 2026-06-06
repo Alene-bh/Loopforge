@@ -1,9 +1,10 @@
 const crypto = require("crypto");
-const { redis, getBaseUrl, saveUser, normalizeStats } = require("../_lib/redis");
+const { redis, key, getBaseUrl, saveUser, normalizeStats } = require("../_lib/redis");
 
 module.exports = async function handler(req, res) {
   const baseUrl = getBaseUrl(req);
   const code = req.query?.code;
+
   if (!code) {
     res.statusCode = 302;
     res.setHeader("Location", `${baseUrl}/?discord=missing_code`);
@@ -13,6 +14,7 @@ module.exports = async function handler(req, res) {
 
   const clientId = process.env.DISCORD_CLIENT_ID;
   const clientSecret = process.env.DISCORD_CLIENT_SECRET;
+
   if (!clientId || !clientSecret) {
     res.statusCode = 500;
     res.end("Faltan DISCORD_CLIENT_ID o DISCORD_CLIENT_SECRET en Vercel.");
@@ -32,7 +34,9 @@ module.exports = async function handler(req, res) {
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: params
   });
+
   const tokenData = await tokenRes.json();
+
   if (!tokenRes.ok) {
     res.statusCode = 302;
     res.setHeader("Location", `${baseUrl}/?discord=token_error`);
@@ -43,7 +47,9 @@ module.exports = async function handler(req, res) {
   const userRes = await fetch("https://discord.com/api/users/@me", {
     headers: { Authorization: `Bearer ${tokenData.access_token}` }
   });
+
   const discord = await userRes.json();
+
   if (!userRes.ok || !discord.id) {
     res.statusCode = 302;
     res.setHeader("Location", `${baseUrl}/?discord=user_error`);
@@ -56,7 +62,7 @@ module.exports = async function handler(req, res) {
     ? `https://cdn.discordapp.com/avatars/${discord.id}/${discord.avatar}.png?size=128`
     : `https://cdn.discordapp.com/embed/avatars/${defaultAvatarIndex}.png`;
 
-  const rawExisting = await redis(["GET", `user:${discord.id}`]).catch(() => null);
+  const rawExisting = await redis(["GET", key(`user:${discord.id}`)]).catch(() => null);
   const existing = rawExisting ? JSON.parse(rawExisting) : {};
 
   const user = {
@@ -68,13 +74,17 @@ module.exports = async function handler(req, res) {
     stats: normalizeStats(existing.stats),
     createdAt: existing.createdAt || new Date().toISOString()
   };
+
   await saveUser(user);
 
   const sessionToken = crypto.randomBytes(32).toString("hex");
-  await redis(["SET", `session:${sessionToken}`, discord.id, "EX", 60 * 60 * 24 * 30]);
+  await redis(["SET", key(`session:${sessionToken}`), discord.id, "EX", 60 * 60 * 24 * 30]);
 
   res.statusCode = 302;
-  res.setHeader("Set-Cookie", `lf_session=${encodeURIComponent(sessionToken)}; Path=/; Max-Age=${60 * 60 * 24 * 30}; HttpOnly; SameSite=Lax; Secure`);
+  res.setHeader(
+    "Set-Cookie",
+    `lf_session=${encodeURIComponent(sessionToken)}; Path=/; Max-Age=${60 * 60 * 24 * 30}; HttpOnly; SameSite=Lax; Secure`
+  );
   res.setHeader("Location", `${baseUrl}/?discord=ok`);
   res.end();
 };

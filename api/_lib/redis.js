@@ -1,6 +1,12 @@
 const REDIS_URL = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
 const REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
 
+const KEY_PREFIX = "loopforge:";
+
+function key(name) {
+  return `${KEY_PREFIX}${name}`;
+}
+
 async function redis(command) {
   if (!REDIS_URL || !REDIS_TOKEN) {
     throw new Error("Redis no configurado. Agregá UPSTASH_REDIS_REST_URL y UPSTASH_REDIS_REST_TOKEN en Vercel.");
@@ -16,6 +22,7 @@ async function redis(command) {
   });
 
   const data = await response.json();
+
   if (!response.ok || data.error) {
     throw new Error(data.error || `Redis error ${response.status}`);
   }
@@ -25,7 +32,11 @@ async function redis(command) {
 
 function getCookie(req, name) {
   const raw = req.headers.cookie || "";
-  const found = raw.split(";").map(x => x.trim()).find(x => x.startsWith(`${name}=`));
+  const found = raw
+    .split(";")
+    .map(x => x.trim())
+    .find(x => x.startsWith(`${name}=`));
+
   if (!found) return null;
   return decodeURIComponent(found.slice(name.length + 1));
 }
@@ -38,6 +49,7 @@ function setJson(res, status, payload) {
 
 function getBaseUrl(req) {
   if (process.env.PUBLIC_BASE_URL) return process.env.PUBLIC_BASE_URL.replace(/\/$/, "");
+
   const host = req.headers["x-forwarded-host"] || req.headers.host;
   const proto = req.headers["x-forwarded-proto"] || "https";
   return `${proto}://${host}`;
@@ -74,21 +86,26 @@ function getWinrate(stats = {}) {
 async function getSessionUser(req) {
   const token = getCookie(req, "lf_session");
   if (!token) return null;
-  const userId = await redis(["GET", `session:${token}`]);
+
+  const userId = await redis(["GET", key(`session:${token}`)]);
   if (!userId) return null;
-  const raw = await redis(["GET", `user:${userId}`]);
+
+  const raw = await redis(["GET", key(`user:${userId}`)]);
   if (!raw) return null;
+
   return JSON.parse(raw);
 }
 
 async function saveUser(user) {
   user.updatedAt = new Date().toISOString();
-  await redis(["SET", `user:${user.id}`, JSON.stringify(user)]);
-  await redis(["SADD", "players", user.id]);
+
+  await redis(["SET", key(`user:${user.id}`), JSON.stringify(user)]);
+  await redis(["SADD", key("players"), user.id]);
 }
 
 module.exports = {
   redis,
+  key,
   getCookie,
   setJson,
   getBaseUrl,
