@@ -15,14 +15,16 @@ function key(name) {
 }
 
 async function redis(command) {
-  if (!REDIS_URL || !REDIS_TOKEN) {
-    throw new Error("Redis no configurado. Agregá UPSTASH_REDIS_REST_URL y UPSTASH_REDIS_REST_TOKEN en Vercel.");
+  if (!REST_URL || !REST_TOKEN) {
+    throw new Error(
+      "Redis no configurado. Revisá que existan UPSTASH_REDIS_KV_REST_API_URL y UPSTASH_REDIS_KV_REST_API_TOKEN en Vercel."
+    );
   }
 
-  const response = await fetch(REDIS_URL, {
+  const response = await fetch(REST_URL, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${REDIS_TOKEN}`,
+      Authorization: `Bearer ${REST_TOKEN}`,
       "Content-Type": "application/json"
     },
     body: JSON.stringify(command)
@@ -41,8 +43,8 @@ function getCookie(req, name) {
   const raw = req.headers.cookie || "";
   const found = raw
     .split(";")
-    .map(x => x.trim())
-    .find(x => x.startsWith(`${name}=`));
+    .map((x) => x.trim())
+    .find((x) => x.startsWith(`${name}=`));
 
   if (!found) return null;
   return decodeURIComponent(found.slice(name.length + 1));
@@ -55,10 +57,13 @@ function setJson(res, status, payload) {
 }
 
 function getBaseUrl(req) {
-  if (process.env.PUBLIC_BASE_URL) return process.env.PUBLIC_BASE_URL.replace(/\/$/, "");
+  if (process.env.PUBLIC_BASE_URL) {
+    return process.env.PUBLIC_BASE_URL.replace(/\/$/, "");
+  }
 
   const host = req.headers["x-forwarded-host"] || req.headers.host;
   const proto = req.headers["x-forwarded-proto"] || "https";
+
   return `${proto}://${host}`;
 }
 
@@ -80,13 +85,17 @@ function normalizeStats(stats = {}) {
     wins: Number(stats.wins) || 0,
     losses: Number(stats.losses) || 0,
     matches: Number(stats.matches) || 0,
-    machineUsage: stats.machineUsage && typeof stats.machineUsage === "object" ? stats.machineUsage : {}
+    machineUsage:
+      stats.machineUsage && typeof stats.machineUsage === "object"
+        ? stats.machineUsage
+        : {}
   };
 }
 
 function getWinrate(stats = {}) {
   stats = normalizeStats(stats);
   if (!stats.matches) return 0;
+
   return Math.round((stats.wins / stats.matches) * 100);
 }
 
