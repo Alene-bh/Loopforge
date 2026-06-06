@@ -523,7 +523,8 @@ function renderAccountMenu() {
       <div class="account-main-info">
         <div class="account-kicker">CUENTA DISCORD</div>
         <h2>${user.username}</h2>
-        <p>Tu progreso ranked vive acá. El apartado Rangos ahora solo muestra la escalera completa.</p>
+        <p>Tu cuenta conecta la forja con tu progreso: guardá tus estadísticas, subí de rango y competí en el leaderboard.
+</p>
       </div>
       <button id="logoutDiscordBtn" class="small-btn" type="button">CERRAR SESIÓN</button>
     </div>
@@ -585,7 +586,7 @@ async function renderLeaderboardMenu() {
         <div>
           <div class="account-kicker">RANKED GLOBAL</div>
           <h2>Leaderboard</h2>
-          <p>Nombre, rango y winrate. Simple, limpio y competitivo.</p>
+          <p>Mostrando lista de los eruditos de Loopforge.</p>
         </div>
       </div>
 
