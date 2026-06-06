@@ -909,7 +909,7 @@ function startPlacementMatch() {
   const probeElo = order[index] || order[order.length - 1] || 120;
 
   elo = probeElo;
-  lives = 1;
+  lives = 3;
   streak = 0;
   challengeNumber = index + 1;
 
@@ -1675,8 +1675,8 @@ function updateRankUI() {
 }
 
 function heartMarkup(current, max = 3) {
-  return `<span class="lives-display">` +
-    Array.from({ length: max }, (_, i) => `<span class="life-heart ${i < current ? "" : "off"}"></span>`).join("") +
+  return `<span class="lives-display" aria-label="${current} de ${max} vidas">` +
+    Array.from({ length: max }, (_, i) => `<span class="life-heart ${i < current ? "" : "off"}" title="Vida ${i + 1}"></span>`).join("") +
     `</span>`;
 }
 
@@ -1688,9 +1688,6 @@ function updateHud(status = null) {
 
   if (currentMode === "tutorial") {
     livesText.innerHTML = `<span class="life-heart-label">∞</span>`;
-  } else if (currentMode === "placement") {
-    const done = profile.placementsDone || 0;
-    livesText.innerHTML = `<span class="life-heart-label">${done}/${PLACEMENT_MATCHES}</span>`;
   } else {
     livesText.innerHTML = heartMarkup(lives, 3);
   }
@@ -1999,41 +1996,52 @@ function finishLevel() {
     renderTutorialMenu();
   } else {
     addLog(`FALLÓ: ${total}/${currentLevel.target}. Diferencia: ${diff}`, "bad");
-    recordRankedResult(false);
 
     if (currentMode === "placement") {
-      const order = ensurePlacementOrder();
-      profile.placementResults.push({ probe: order[profile.placementsDone] || elo, win: false });
-      profile.placementsDone = (profile.placementsDone || 0) + 1;
-      saveProfile();
-      clearSavedRun();
+      lives--;
+      playSfx(lives > 0 ? "hurt" : "death");
+      streak = 0;
 
-      if (profile.placementsDone >= PLACEMENT_MATCHES) {
-        profile.placementComplete = true;
-        elo = calculatePlacementElo();
-        profile.elo = elo;
-        profile.bestElo = Math.max(profile.bestElo || 100, elo);
-        profile.lossStreak = 0;
-        saveProfile();
-
-        modalTitle.textContent = "🏁 POSICIONAMIENTO COMPLETO";
-        modalText.textContent = `Terminaste tus ${PLACEMENT_MATCHES} partidas de posicionamiento. Tu ELO inicial quedó en ${elo}.`;
-        setModalActions("ENTRAR A RANKED", { showSecondary: true, secondaryText: "VOLVER AL MENÚ" });
+      if (lives > 0) {
+        saveRun();
+        modalTitle.textContent = "⚠ VIDA PERDIDA";
+        modalText.textContent = `Terminaste en ${total}. Objetivo: ${currentLevel.target}. Te quedan ${lives} vidas para esta partida de posicionamiento.`;
+        setModalActions("REINTENTAR RETO");
       } else {
-        modalTitle.textContent = "⚠ PARTIDA DE POSICIONAMIENTO PERDIDA";
-        modalText.textContent = `Perdiste esta partida. Vas ${profile.placementsDone}/${PLACEMENT_MATCHES}. Seguimos con la siguiente.`;
-        setModalActions("SIGUIENTE PARTIDA");
+        recordRankedResult(false);
+        const order = ensurePlacementOrder();
+        profile.placementResults.push({ probe: order[profile.placementsDone] || elo, win: false });
+        profile.placementsDone = (profile.placementsDone || 0) + 1;
+        saveProfile();
+        clearSavedRun();
+
+        if (profile.placementsDone >= PLACEMENT_MATCHES) {
+          profile.placementComplete = true;
+          elo = calculatePlacementElo();
+          profile.elo = elo;
+          profile.bestElo = Math.max(profile.bestElo || 100, elo);
+          profile.lossStreak = 0;
+          saveProfile();
+
+          modalTitle.textContent = "🏁 POSICIONAMIENTO COMPLETO";
+          modalText.textContent = `Terminaste tus ${PLACEMENT_MATCHES} partidas de posicionamiento. Tu ELO inicial quedó en ${elo}.`;
+          setModalActions("ENTRAR A RANKED", { showSecondary: true, secondaryText: "VOLVER AL MENÚ" });
+        } else {
+          modalTitle.textContent = "⚠ PARTIDA DE POSICIONAMIENTO PERDIDA";
+          modalText.textContent = `Perdiste esta partida de posicionamiento al quedarte sin vidas. Vas ${profile.placementsDone}/${PLACEMENT_MATCHES}. Seguimos con la siguiente.`;
+          setModalActions("SIGUIENTE PARTIDA");
+        }
       }
     } else if (currentMode === "infinite") {
       lives--;
       playSfx(lives > 0 ? "hurt" : "death");
       streak = 0;
-      saveRun();
 
       modalTitle.textContent = lives > 0 ? "⚠ VIDA PERDIDA" : "☠ RUN TERMINADA";
       modalText.textContent = lives > 0
         ? `Terminaste en ${total}. Objetivo: ${currentLevel.target}. Te quedan ${lives} vidas.`
-        : endRunAndLoseElo();
+        : (() => { recordRankedResult(false); return endRunAndLoseElo(); })();
+      if (lives > 0) saveRun();
       setModalActions(lives > 0 ? "REINTENTAR RETO" : "VOLVER AL MENÚ");
     } else {
       modalTitle.textContent = "⚠ INTENTALO DE NUEVO";
@@ -2463,6 +2471,11 @@ modalNextBtn.addEventListener("click", () => {
     return;
   }
 
+  if (modalNextBtn.textContent === "REINTENTAR RETO") {
+    resetCurrent();
+    return;
+  }
+
   if (currentMode === "placement") {
     if (profile.placementComplete) {
       currentMode = "infinite";
@@ -2475,11 +2488,6 @@ modalNextBtn.addEventListener("click", () => {
 
   if (lives <= 0) {
     showScreen("mainMenu");
-    return;
-  }
-
-  if (modalNextBtn.textContent === "REINTENTAR RETO") {
-    resetCurrent();
     return;
   }
 
