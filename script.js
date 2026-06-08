@@ -3,7 +3,9 @@ const STORAGE_RUN = "loopforge_active_run_v14";
 
 const PLACEMENT_MATCHES = 5;
 const PLACEMENT_MIN_ELO = 100;
-const PLACEMENT_MAX_ELO = 799; // techo: como máximo Oro al terminar posicionamiento
+const PLACEMENT_MAX_ELO = 1099; // techo: como máximo Platino al terminar posicionamiento
+const ONE_TIME_RANK_RESET_VERSION = "season_1_balance_reset";
+const ONE_TIME_RANK_RESET_QUERY = "resetRankOnce";
 
 const PARTS = {
   generator: {
@@ -45,11 +47,14 @@ const PARTS = {
   compressor: {
     name: "Compresor",
     short: "CMP",
-    desc: "Cada 10 se vuelve 2.",
+    desc: "Cada 10 se vuelve 2 y conserva el resto.",
     className: "compressor",
     unlockElo: 100,
-    apply: (v, ctx) => Math.floor(v / 10) * 2,
-    log: (a, b) => `cada 10 de ${a} produce ${b}`
+    apply: (v, ctx) => {
+      if (v < 10) return v;
+      return Math.floor(v / 10) * 2 + (v % 10);
+    },
+    log: (a, b) => a < 10 ? `${a} no llega a 10, queda ${b}` : `cada 10 de ${a} se comprime y queda ${b}`
   },
   stabilizer: {
     name: "Estabilizador",
@@ -240,6 +245,9 @@ let elo = profile.elo || 100;
 let lives = 3;
 let streak = 0;
 let challengeNumber = 1;
+let resetUses = 0;
+const MAX_RESET_USES = 2;
+const STREAK_ELO_CAP = 28;
 
 let gridState = [];
 let selectedTool = "belt";
@@ -248,6 +256,7 @@ let total = 0;
 let lastOrbValue = 0;
 let running = false;
 let stopRequested = false;
+let forcedFailureReason = null;
 let speedIndex = 0;
 let speedMultiplier = 1;
 let mouseDown = false;
@@ -547,10 +556,27 @@ function renderLeaderboardRows(rows) {
         ${avatarHtml(row, "leaderboard-avatar")}
         <strong>${row.name}</strong>
       </div>
-      <span>${row.rank}</span>
+      ${leaderboardRankHtml(row)}
       <b>${row.winrate}%</b>
     </div>
   `).join("");
+}
+
+function leaderboardRankHtml(row) {
+  const numericElo = Number(row.elo || row.rating || row.score || 0);
+  const rank = numericElo ? getRankInfo(numericElo) : getRankFromName(row.rank);
+  const eloLine = rank.key === "loopforger" && numericElo ? `<small>${numericElo} ELO</small>` : "";
+  return `
+    <span class="leaderboard-rank-icon ${rank.cls}" title="${rank.name}">
+      <img src="${getRankBadgeSrc(rank)}" alt="${rank.name}">
+      ${eloLine}
+    </span>
+  `;
+}
+
+function getRankFromName(name = "") {
+  const normalized = String(name).toLowerCase();
+  return RANKS.find(r => r.name.toLowerCase() === normalized || r.key === normalized) || RANKS[0];
 }
 
 async function renderLeaderboardMenu() {
@@ -633,6 +659,95 @@ async function syncAccountStats() {
   } catch {}
 }
 
+function getRankResetUsageMap() {
+  try {
+    return JSON.parse(localStorage.getItem(`${STORAGE_PROFILE}_${ONE_TIME_RANK_RESET_VERSION}`) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function saveRankResetUsageMap(map) {
+  localStorage.setItem(`${STORAGE_PROFILE}_${ONE_TIME_RANK_RESET_VERSION}`, JSON.stringify(map || {}));
+}
+
+function getRankResetKey(user) {
+  return user?.id || user?.username || "local";
+}
+
+function hasUsedOneTimeRankReset(user) {
+  const map = getRankResetUsageMap();
+  return !!map[getRankResetKey(user)];
+}
+
+function markOneTimeRankResetUsed(user) {
+  const map = getRankResetUsageMap();
+  map[getRankResetKey(user)] = Date.now();
+  saveRankResetUsageMap(map);
+}
+
+function isRankResetRequested() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    return params.get(ONE_TIME_RANK_RESET_QUERY) === "1" || localStorage.getItem("loopforge_pending_rank_reset") === "1";
+  } catch {
+    return false;
+  }
+}
+
+function cleanRankResetUrl() {
+  try {
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has(ONE_TIME_RANK_RESET_QUERY)) return;
+    url.searchParams.delete(ONE_TIME_RANK_RESET_QUERY);
+    window.history.replaceState({}, document.title, url.pathname + url.search + url.hash);
+  } catch {}
+}
+
+function applyOneTimeRankReset(user) {
+  if (!isRankResetRequested()) return false;
+
+  if (!user) {
+    localStorage.setItem("loopforge_pending_rank_reset", "1");
+    alert("Reset de rango pendiente: iniciá sesión con Discord y volvé al juego para aplicarlo.");
+    return false;
+  }
+
+  if (hasUsedOneTimeRankReset(user)) {
+    localStorage.removeItem("loopforge_pending_rank_reset");
+    cleanRankResetUrl();
+    alert("Este reset de rango ya fue usado en esta cuenta.");
+    return false;
+  }
+
+  markOneTimeRankResetUsed(user);
+  localStorage.removeItem("loopforge_pending_rank_reset");
+  clearSavedRun();
+
+  elo = PLACEMENT_MIN_ELO;
+  streak = 0;
+  lives = 3;
+  resetUses = 0;
+
+  profile.elo = PLACEMENT_MIN_ELO;
+  profile.bestElo = PLACEMENT_MIN_ELO;
+  profile.placementComplete = false;
+  profile.placementsDone = 0;
+  profile.placementResults = [];
+  profile.placementOrder = [];
+  profile.lossStreak = 0;
+  profile.stats = normalizeStats(profile.stats);
+
+  saveProfile();
+  syncAccountStats();
+  updateHud();
+  renderAccountMenu();
+  renderLeaderboardMenu();
+  cleanRankResetUrl();
+  alert("Reset aplicado: esta cuenta volvió a Unranked y tendrá que jugar posicionamiento otra vez.");
+  return true;
+}
+
 function mergeRemoteProfile(user) {
   if (!user) return;
   profile.discordUser = {
@@ -640,6 +755,10 @@ function mergeRemoteProfile(user) {
     username: user.username,
     avatar: user.avatar || "assets/discord-placeholder.svg"
   };
+
+  if (applyOneTimeRankReset(profile.discordUser)) {
+    return;
+  }
 
   const remoteStats = normalizeStats(user.stats);
   const localStats = normalizeStats(profile.stats);
@@ -695,7 +814,8 @@ function saveRun() {
     cycle,
     total,
     lastOrbValue,
-    selectedTool
+    selectedTool,
+    resetUses
   };
 
   localStorage.setItem(STORAGE_RUN, JSON.stringify(state));
@@ -854,7 +974,7 @@ function emptyGrid() {
   for (let y = 0; y < GRID_H; y++) {
     const row = [];
     for (let x = 0; x < GRID_W; x++) {
-      row.push({ belt: false, machine: null, blocked: false });
+      row.push({ belt: false, machine: null, blocked: false, gate: null });
     }
     arr.push(row);
   }
@@ -870,8 +990,19 @@ function applyBlockedCells(level) {
       gridState[p.y][p.x].blocked = true;
       gridState[p.y][p.x].belt = false;
       gridState[p.y][p.x].machine = null;
+      gridState[p.y][p.x].gate = null;
     }
   }
+}
+
+function applyEnergyGates(level) {
+  const gate = level.energyGate;
+  if (!gate || !inside(gate.x, gate.y)) return;
+  if (gate.x === INPUT.x && gate.y === INPUT.y) return;
+  if (gate.x === OUTPUT.x && gate.y === OUTPUT.y) return;
+  const cell = gridState[gate.y][gate.x];
+  if (cell.blocked) return;
+  cell.gate = gate;
 }
 
 
@@ -895,10 +1026,10 @@ function calculatePlacementElo() {
   const earnedProbe = results.filter(r => r.win).reduce((sum, r) => sum + r.probe, 0);
   const weightedRatio = earnedProbe / totalProbe;
 
-  // El posicionamiento ubica, pero no corona.
-  // Aunque ganes las 5, el máximo inicial es Oro. Rangos altos se ganan en ranked real.
-  const winBonus = wins * 36;
-  const raw = Math.round(PLACEMENT_MIN_ELO + weightedRatio * 560 + winBonus);
+  // El posicionamiento ubica fuerte, pero no corona.
+  // Aunque ganes las 5, el máximo inicial es Platino. Diamante+ se gana en ranked real.
+  const winBonus = wins * 44;
+  const raw = Math.round(PLACEMENT_MIN_ELO + weightedRatio * 790 + winBonus);
   return Math.max(PLACEMENT_MIN_ELO, Math.min(PLACEMENT_MAX_ELO, raw));
 }
 
@@ -910,6 +1041,7 @@ function startPlacementMatch() {
 
   elo = probeElo;
   lives = 3;
+  resetUses = 0;
   streak = 0;
   challengeNumber = index + 1;
 
@@ -937,8 +1069,10 @@ function startInfiniteRun() {
     total = saved.total || 0;
     lastOrbValue = saved.lastOrbValue || 0;
     selectedTool = saved.selectedTool || "belt";
+    resetUses = saved.resetUses || 0;
     running = false;
     stopRequested = false;
+    forcedFailureReason = null;
     showScreen("gameScreen");
     renderGame();
     clearLog();
@@ -954,6 +1088,7 @@ function startInfiniteRun() {
   currentMode = "infinite";
   elo = profile.elo || 100;
   lives = 3;
+  resetUses = 0;
   streak = 0;
   challengeNumber = 1;
   currentLevel = generateInfiniteLevel();
@@ -974,15 +1109,26 @@ function generateChallengeForValue(sourceElo, options = {}) {
   }
 
   const layout = getLayoutForElo(sourceElo);
-  const modifiers = getModifiersForElo(sourceElo, layout);
-  const requiredMod = modifiers.find(m => m.type === "requiredMachines");
-  const requiredMachines = requiredMod ? requiredMod.value : [];
+  const specialRules = createSpecialRulesForElo(sourceElo, available);
+  const machineLimit = getMachineLimitForElo(sourceElo);
 
-  const maxMachines = Math.min(12, 3 + Math.floor(sourceElo / 160) + Math.floor((options.challengeNumber || challengeNumber || 1) / 4));
-  const minMachines = sourceElo < 200 ? 2 : sourceElo < 550 ? 2 : sourceElo < 1100 ? 3 : 4;
+  const baseMax = 3 + Math.floor(sourceElo / 170) + Math.floor((options.challengeNumber || challengeNumber || 1) / 5);
+  const maxMachines = Math.max(2, Math.min(machineLimit, 12, baseMax));
+  const minMachines = Math.min(maxMachines, sourceElo < 350 ? 2 : sourceElo < 800 ? 3 : sourceElo < 1100 ? 3 : 4);
 
   const startPool = getStartEnergyPool(sourceElo);
-  const generated = buildVariedChallenge(available, minMachines, maxMachines, startPool, cycles, requiredMachines);
+  const generated = buildVariedChallenge(available, minMachines, maxMachines, startPool, cycles, specialRules, sourceElo);
+
+  const minimum = findMinimumMachineCount({
+    available,
+    start: generated.start,
+    targetPerCycle: generated.perCycle,
+    maxMachines,
+    specialRules
+  }) || generated.solution.length;
+
+  const energyGate = layout.energyGate ? makeEnergyGate(layout.energyGate, generated.solution, generated.start, sourceElo) : null;
+  const modifiers = getModifiersForElo(sourceElo, layout, specialRules, machineLimit, energyGate, minimum);
 
   return {
     name: options.name || `Reto ${challengeNumber}`,
@@ -995,7 +1141,11 @@ function generateChallengeForValue(sourceElo, options = {}) {
     input: layout.input,
     output: layout.output,
     blockedCells: layout.blockedCells,
+    energyGate,
     modifiers,
+    specialRules,
+    maxMachines,
+    minMachines: minimum,
     message: options.placement
       ? `Partida de posicionamiento ${options.placementIndex || 1}/${PLACEMENT_MATCHES}.`
       : `Reto ranked. ELO ${sourceElo}. Energía inicial: ${generated.start}.`,
@@ -1015,25 +1165,27 @@ function getStartEnergyPool(value) {
   return [0, 1, 2, 3];
 }
 
-function buildVariedChallenge(available, minMachines, maxMachines, startPool, cycles, requiredMachines = []) {
+function buildVariedChallenge(available, minMachines, maxMachines, startPool, cycles, specialRules = {}, sourceElo = elo) {
   const recent = profile.recentTargets || [];
   let best = null;
   let bestScore = -Infinity;
 
-  for (let attempt = 0; attempt < 180; attempt++) {
+  for (let attempt = 0; attempt < 260; attempt++) {
     const start = startPool[rand(0, startPool.length - 1)];
-    const solution = buildRandomSolution(available, minMachines, maxMachines, start, requiredMachines);
+    const solution = buildRandomSolution(available, minMachines, maxMachines, start, specialRules, sourceElo);
     const evaluated = evaluateSolution(solution, start);
     const perCycle = evaluated.total;
     const target = perCycle * cycles;
 
     if (perCycle <= 0 || target <= 0) continue;
+    if (!solutionSatisfiesSpecialRules(solution, specialRules)) continue;
 
     const repeatedTargetPenalty = recent.includes(target) ? -80 : 0;
     const boringPenalty = isBoringSolution(solution, start, perCycle) ? -60 : 0;
+    const compactBonus = sourceElo >= 1100 ? 20 : 0;
     const complexityScore = solution.length * 8;
     const valueScore = Math.min(60, Math.abs(target - 15));
-    const score = complexityScore + valueScore + repeatedTargetPenalty + boringPenalty + Math.random() * 12;
+    const score = complexityScore + compactBonus + valueScore + repeatedTargetPenalty + boringPenalty + Math.random() * 12;
 
     if (score > bestScore) {
       bestScore = score;
@@ -1042,11 +1194,13 @@ function buildVariedChallenge(available, minMachines, maxMachines, startPool, cy
   }
 
   if (!best) {
+    const fallback = enforceSpecialRulesInSolution(["generator", "duplicator"], specialRules, available, maxMachines);
+    const evaluated = evaluateSolution(fallback, 0);
     best = {
       start: 0,
-      solution: ["generator", "duplicator"],
-      perCycle: 6,
-      target: 6 * cycles
+      solution: fallback,
+      perCycle: Math.max(1, evaluated.total),
+      target: Math.max(1, evaluated.total) * cycles
     };
   }
 
@@ -1063,12 +1217,12 @@ function isBoringSolution(solution, start, perCycle) {
   return false;
 }
 
-function buildRandomSolution(available, minMachines, maxMachines, start, requiredMachines = []) {
+function buildRandomSolution(available, minMachines, maxMachines, start, specialRules = {}, sourceElo = elo) {
   const safeFirst = available.filter(id => id !== "inverter" && id !== "compressor");
-  let best = ["generator", "duplicator"];
+  let best = enforceSpecialRulesInSolution(["generator", "duplicator"], specialRules, available, maxMachines);
 
-  for (let attempt = 0; attempt < 100; attempt++) {
-    const len = rand(minMachines, maxMachines);
+  for (let attempt = 0; attempt < 140; attempt++) {
+    const len = rand(Math.max(minMachines, getMinimumRuleLength(specialRules)), maxMachines);
     const sol = [];
 
     for (let i = 0; i < len; i++) {
@@ -1079,82 +1233,226 @@ function buildRandomSolution(available, minMachines, maxMachines, start, require
         pool = pool.filter(id => !["filter", "compressor", "subtractor"].includes(id));
       }
 
-      // En Hierro/Bronce evitamos que salga demasiado "vacío" o imposible.
-      if (elo < 350) {
+      if (sourceElo < 350) {
         pool = pool.filter(id => !["inverter", "limiter", "oddBoost"].includes(id));
       }
 
+      if (!pool.length) pool = available;
       sol.push(pool[rand(0, pool.length - 1)]);
     }
 
-    // Forzamos máquinas requeridas por modificador.
-    requiredMachines.forEach((id, idx) => {
-      if (!sol.includes(id)) {
-        const replaceIndex = Math.min(sol.length - 1, idx);
-        sol[replaceIndex] = id;
-      }
-    });
+    const fixed = enforceSpecialRulesInSolution(sol, specialRules, available, maxMachines);
 
-    // Forzamos al menos una máquina productiva para que no sea todo 0.
-    if (!sol.includes("generator") && !sol.includes("bank") && start <= 1) {
-      const replaceIndex = Math.max(requiredMachines.length, rand(0, sol.length - 1));
-      sol[Math.min(sol.length - 1, replaceIndex)] = "generator";
+    if (!fixed.includes("generator") && !fixed.includes("bank") && start <= 1) {
+      const replaceIndex = Math.min(fixed.length - 1, Math.max(getMinimumRuleLength(specialRules) - 1, rand(0, fixed.length - 1)));
+      fixed[replaceIndex] = "generator";
     }
 
-    const result = evaluateSolution(sol, start).total;
-    const maxResult = elo >= 2000 ? 260 : elo >= 1500 ? 200 : elo >= 800 ? 140 : 90;
+    const result = evaluateSolution(fixed, start).total;
+    const maxResult = sourceElo >= 2000 ? 300 : sourceElo >= 1500 ? 230 : sourceElo >= 800 ? 155 : 95;
 
-    if (result > 0 && result < maxResult) {
-      best = sol;
+    if (result > 0 && result < maxResult && solutionSatisfiesSpecialRules(fixed, specialRules)) {
+      best = fixed.slice(0, maxMachines);
       break;
     }
   }
 
-  return best;
+  return best.slice(0, maxMachines);
 }
 
+function getMinimumRuleLength(rules = {}) {
+  let min = 0;
+  if (rules.startWithMachine) min = Math.max(min, 1);
+  if (rules.adjacentPair) min = Math.max(min, 2);
+  if (rules.requiredMachines) min = Math.max(min, rules.requiredMachines.length);
+  return min || 1;
+}
+
+function enforceSpecialRulesInSolution(solution, rules = {}, available = [], maxMachines = 12) {
+  let sol = [...solution];
+
+  if (rules.startWithMachine) {
+    if (!sol.length) sol.push(rules.startWithMachine);
+    sol[0] = rules.startWithMachine;
+  }
+
+  if (rules.adjacentPair) {
+    const [a, b] = rules.adjacentPair;
+    const pos = rules.startWithMachine ? 1 : rand(0, Math.max(0, Math.min(sol.length - 2, maxMachines - 2)));
+    while (sol.length < pos + 2) sol.push(available[rand(0, available.length - 1)] || "generator");
+    sol[pos] = a;
+    sol[pos + 1] = b;
+  }
+
+  for (const id of rules.requiredMachines || []) {
+    if (!sol.includes(id)) {
+      if (sol.length < maxMachines) sol.push(id);
+      else sol[Math.max(0, sol.length - 1)] = id;
+    }
+  }
+
+  return sol.slice(0, maxMachines);
+}
+
+function solutionSatisfiesSpecialRules(solution, rules = {}) {
+  if (rules.startWithMachine && solution[0] !== rules.startWithMachine) return false;
+  if (rules.adjacentPair) {
+    const [a, b] = rules.adjacentPair;
+    let ok = false;
+    for (let i = 0; i < solution.length - 1; i++) {
+      if (solution[i] === a && solution[i + 1] === b) ok = true;
+    }
+    if (!ok) return false;
+  }
+  for (const id of rules.requiredMachines || []) {
+    if (!solution.includes(id)) return false;
+  }
+  return true;
+}
+
+function getMachineLimitForElo(value) {
+  if (value >= 1500) return 8;
+  if (value >= 1100) return 9;
+  if (value >= 800) return 10;
+  return 12;
+}
+
+function createSpecialRulesForElo(value, available) {
+  const rules = { requiredMachines: [] };
+
+  if (value >= 550) {
+    const pool = available.filter(id => !["stabilizer"].includes(id));
+    const requiredCount = value >= 1500 ? 2 : 1;
+    while (rules.requiredMachines.length < requiredCount && pool.length > 0) {
+      const id = pool.splice(rand(0, pool.length - 1), 1)[0];
+      rules.requiredMachines.push(id);
+    }
+  }
+
+  if (value >= 800 && available.includes("generator") && Math.random() < 0.45) {
+    rules.startWithMachine = "generator";
+    if (!rules.requiredMachines.includes("generator")) rules.requiredMachines.push("generator");
+  }
+
+  if (value >= 1100 && available.includes("oddBoost") && Math.random() < 0.55) {
+    rules.adjacentPair = ["generator", "oddBoost"];
+    for (const id of rules.adjacentPair) {
+      if (!rules.requiredMachines.includes(id)) rules.requiredMachines.push(id);
+    }
+  }
+
+  return rules;
+}
+
+function makeEnergyGate(pos, solution, start, sourceElo) {
+  const prefixLen = Math.max(1, Math.floor(solution.length * 0.55));
+  const prefixValue = evaluateSolution(solution.slice(0, prefixLen), start).value;
+  const minValue = Math.max(1, prefixValue - (sourceElo >= 1500 ? 1 : 3));
+  return { x: pos.x, y: pos.y, minValue };
+}
+
+function findMinimumMachineCount({ available, start, targetPerCycle, maxMachines, specialRules = {} }) {
+  const limit = Math.min(maxMachines || 8, 8);
+  const maxAbs = 360;
+  let states = [{ value: start, bonus: 0, seq: [] }];
+
+  for (let depth = 0; depth <= limit; depth++) {
+    for (const st of states) {
+      if (st.seq.length === depth && st.value + st.bonus === targetPerCycle && solutionSatisfiesSpecialRules(st.seq, specialRules)) {
+        return depth;
+      }
+    }
+    if (depth === limit) break;
+
+    const next = [];
+    const seen = new Set();
+    for (const st of states) {
+      if (st.seq.length !== depth) continue;
+      for (const id of available) {
+        const ctx = { bonus: st.bonus };
+        const value = PARTS[id].apply(st.value, ctx);
+        if (Math.abs(value) > maxAbs || Math.abs(ctx.bonus) > 80) continue;
+        const seq = [...st.seq, id];
+        if (specialRules.startWithMachine && seq.length === 1 && seq[0] !== specialRules.startWithMachine) continue;
+        const k = `${value}|${ctx.bonus}|${seq.join(",")}`;
+        if (seen.has(k)) continue;
+        seen.add(k);
+        next.push({ value, bonus: ctx.bonus, seq });
+      }
+    }
+    states = next.slice(0, 12000);
+  }
+
+  return null;
+}
 
 function getLayoutForElo(value) {
-  // El mapa se achica o cambia cuando aparecen restricciones.
+  // Menos espacio desde rangos medios; Diamante+ ya empieza la curva heavy.
   if (value >= 2000) {
-    return makeLayout(11, 8, { x: 1, y: 1 }, { x: 9, y: 6 }, 10);
+    return makeLayout(10, 7, { x: 1, y: 1 }, { x: 8, y: 5 }, 14, true);
   }
   if (value >= 1500) {
-    return makeLayout(12, 8, { x: 1, y: 1 }, { x: 10, y: 6 }, 8);
+    return makeLayout(11, 8, { x: 1, y: 1 }, { x: 9, y: 6 }, 11, true);
   }
   if (value >= 1100) {
-    return makeLayout(13, 9, { x: 1, y: 1 }, { x: 11, y: 7 }, 6);
+    return makeLayout(12, 8, { x: 1, y: 1 }, { x: 10, y: 6 }, 8, true);
   }
   if (value >= 800) {
-    return makeLayout(14, 9, { x: 1, y: 1 }, { x: 12, y: 7 }, 4);
+    return makeLayout(14, 9, { x: 1, y: 1 }, { x: 12, y: 7 }, 5, false);
   }
   if (value >= 550) {
-    return makeLayout(16, 10, { x: 1, y: 1 }, { x: 14, y: 8 }, 2);
+    return makeLayout(15, 9, { x: 1, y: 1 }, { x: 13, y: 7 }, 3, false);
   }
   if (value >= 350) {
-    return makeLayout(17, 11, { x: 1, y: 1 }, { x: 15, y: 9 }, 0);
+    return makeLayout(16, 10, { x: 1, y: 1 }, { x: 14, y: 8 }, 1, false);
   }
-  return makeLayout(20, 13, { x: 1, y: 1 }, { x: 18, y: 11 }, 0);
+  return makeLayout(17, 11, { x: 1, y: 1 }, { x: 15, y: 9 }, 0, false);
 }
 
-function makeLayout(w, h, input, output, blockCount) {
+function makeLayout(w, h, input, output, blockCount, useGate = false) {
+  const lPath = buildGuaranteedPath(input, output);
+  const pathKeys = new Set(lPath.map(p => `${p.x},${p.y}`));
   const blockedCells = [];
-  const forbidden = new Set([`${input.x},${input.y}`, `${output.x},${output.y}`]);
+  const forbidden = new Set([`${input.x},${input.y}`, `${output.x},${output.y}`, ...pathKeys]);
 
-  let attempts = 0;
-  while (blockedCells.length < blockCount && attempts < blockCount * 30 + 20) {
-    attempts++;
-    const x = rand(2, w - 3);
-    const y = rand(2, h - 3);
-    const k = `${x},${y}`;
-    if (forbidden.has(k)) continue;
-    forbidden.add(k);
-    blockedCells.push({ x, y });
+  const candidates = [];
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const k = `${x},${y}`;
+      if (forbidden.has(k)) continue;
+      const distToPath = Math.min(...lPath.map(p => Math.abs(p.x - x) + Math.abs(p.y - y)));
+      candidates.push({ x, y, score: distToPath + Math.random() * 1.4 });
+    }
   }
 
-  return { w, h, input, output, blockedCells };
+  candidates.sort((a, b) => a.score - b.score);
+  for (const c of candidates) {
+    if (blockedCells.length >= blockCount) break;
+    blockedCells.push({ x: c.x, y: c.y });
+  }
+
+  const gate = useGate ? lPath[Math.max(2, Math.floor(lPath.length * 0.52))] : null;
+  return { w, h, input, output, blockedCells, energyGate: gate ? { x: gate.x, y: gate.y } : null };
 }
 
+function buildGuaranteedPath(input, output) {
+  const path = [];
+  let x = input.x;
+  let y = input.y;
+  path.push({ x, y });
+
+  while (x !== output.x) {
+    x += x < output.x ? 1 : -1;
+    path.push({ x, y });
+  }
+
+  while (y !== output.y) {
+    y += y < output.y ? 1 : -1;
+    path.push({ x, y });
+  }
+
+  return path;
+}
 
 function getUnlockedMachineIds(value) {
   const ids = [...ALL_BASIC];
@@ -1162,6 +1460,97 @@ function getUnlockedMachineIds(value) {
     if (value >= PARTS[id].unlockElo) ids.push(id);
   }
   return ids;
+}
+
+function getModifiersForElo(value, layout, specialRules = {}, machineLimit = getMachineLimitForElo(value), energyGate = null, minimum = null) {
+  const mods = [];
+
+  if (value >= 350) {
+    const manhattan = Math.abs(layout.output.x - layout.input.x) + Math.abs(layout.output.y - layout.input.y) + 1;
+    const extra = value >= 1500 ? 3 : value >= 1100 ? 4 : value >= 800 ? 5 : 7;
+    mods.push({
+      type: "maxBelts",
+      value: manhattan + extra,
+      name: `Máximo ${manhattan + extra} cintas`,
+      desc: "El pasillo debe ir más justo: no sobra tanto mapa."
+    });
+  }
+
+  if (value >= 550 && layout.blockedCells.length) {
+    mods.push({
+      type: "blockedCells",
+      value: layout.blockedCells.length,
+      name: `${layout.blockedCells.length} inhibidores activos`,
+      desc: "Bloquean zonas cercanas al camino ideal para apretar la ruta."
+    });
+  }
+
+  if (value >= 800) {
+    mods.push({
+      type: "maxMachines",
+      value: machineLimit,
+      name: `Máximo ${machineLimit} máquinas`,
+      desc: "El generador del reto también respeta este límite real."
+    });
+  }
+
+  if (specialRules.startWithMachine) {
+    mods.push({
+      type: "startWithMachine",
+      value: specialRules.startWithMachine,
+      name: `Empezar con ${PARTS[specialRules.startWithMachine].name}`,
+      desc: "La primera máquina que toca la bolita después del IN debe ser esta."
+    });
+  }
+
+  if (specialRules.adjacentPair) {
+    const [a, b] = specialRules.adjacentPair;
+    mods.push({
+      type: "adjacentPair",
+      value: specialRules.adjacentPair,
+      name: `${PARTS[a].name} + ${PARTS[b].name} pegados`,
+      desc: "Deben aparecer seguidos en el recorrido, sin otra máquina en el medio."
+    });
+  }
+
+  if (specialRules.requiredMachines?.length) {
+    const required = specialRules.requiredMachines;
+    mods.push({
+      type: "requiredMachines",
+      value: required,
+      name: required.length === 1 ? `Usar ${PARTS[required[0]].name}` : `Usar ${required.map(id => PARTS[id].name).join(" + ")}`,
+      desc: "Tienen que afectar el recorrido real; no alcanza con ponerlas de adorno."
+    });
+  }
+
+  if (energyGate) {
+    mods.push({
+      type: "energyGate",
+      value: energyGate,
+      name: `Zona de presión ≥ ${energyGate.minValue}`,
+      desc: "La cinta debe pasar por la zona brillante con esa energía o más."
+    });
+  }
+
+  if (minimum) {
+    mods.push({
+      type: "minimumMachines",
+      value: minimum,
+      name: `Solución mínima: ${minimum}`,
+      desc: "Resolver cerca de este mínimo da más ELO."
+    });
+  }
+
+  if (value >= 2000) {
+    mods.push({
+      type: "tightPath",
+      value: true,
+      name: "Mapa compacto",
+      desc: "Menos espacio, más precisión."
+    });
+  }
+
+  return mods;
 }
 
 function getModifiersForElo(value, layout) {
@@ -1279,14 +1668,17 @@ function startLevel(level) {
   configureGrid(level);
   gridState = emptyGrid();
   applyBlockedCells(level);
+  applyEnergyGates(level);
 
   selectedTool = "belt";
   cycle = 0;
   total = 0;
   lastOrbValue = 0;
   currentPath = [];
+  resetUses = 0;
   running = false;
   stopRequested = false;
+  forcedFailureReason = null;
   modal.classList.add("hidden");
   if (currentMode === "tutorial") tutorialCoachDismissed = false;
 
@@ -1349,7 +1741,8 @@ function renderModifiers() {
   const core = rankedLike
     ? [
         `<div class="modifier-chip core-info"><b>Energía inicial</b><br>${currentLevel.start}</div>`,
-        `<div class="modifier-chip core-info"><b>Ciclos</b><br>${currentLevel.cycles}</div>`
+        `<div class="modifier-chip core-info"><b>Ciclos</b><br>${currentLevel.cycles}</div>`,
+        `<div class="modifier-chip core-info"><b>Mínimo ideal</b><br>${currentLevel.minMachines || currentLevel.generatedSolution?.length || "?"} máquinas</div>`
       ]
     : [];
 
@@ -1359,7 +1752,7 @@ function renderModifiers() {
   }
 
   const mods = currentLevel.modifiers && currentLevel.modifiers.length
-    ? currentLevel.modifiers.map(m => `<div class="modifier-chip ${m.type === "requiredMachines" ? "required" : ""}"><b>${m.name}</b><br>${m.desc}</div>`)
+    ? currentLevel.modifiers.map(m => `<div class="modifier-chip ${["requiredMachines", "startWithMachine", "adjacentPair", "energyGate"].includes(m.type) ? "required" : ""}"><b>${m.name}</b><br>${m.desc}</div>`)
     : [`<div class="modifier-chip empty">Sin modificadores especiales.</div>`];
 
   modifierBox.innerHTML = [...core, ...mods].join("");
@@ -1416,16 +1809,15 @@ function renderGrid() {
       const isOutput = x === OUTPUT.x && y === OUTPUT.y;
 
       if (state.blocked) cell.classList.add("blocked");
+      if (state.gate) cell.classList.add("energy-gate");
       if (state.belt) cell.classList.add("belt");
       if (state.machine) cell.classList.add("machine-cell");
       if (isInput) {
         cell.classList.add("input");
-        cell.dataset.label = "IN";
         cell.innerHTML = `<div class="port-core"></div>`;
       }
       if (isOutput) {
         cell.classList.add("output");
-        cell.dataset.label = "OUT";
         cell.innerHTML = `<div class="port-core"></div>`;
       }
 
@@ -1489,13 +1881,16 @@ function applyTool(x, y, silent = false) {
     }
   } else if (PARTS[selectedTool]) {
     if (!isInput && !isOutput) {
+      if (!cell.belt) {
+        if (!silent) addLog("Primero colocá una cinta: las máquinas ahora solo se apoyan sobre cintas.", "bad");
+        return;
+      }
       const maxMachines = getModifier("maxMachines");
       if (!cell.machine && maxMachines && countMachines() >= maxMachines.value) {
         if (!silent) addLog(`Límite de máquinas alcanzado: ${maxMachines.value}.`, "bad");
         return;
       }
       const previousMachine = cell.machine;
-      cell.belt = true;
       cell.machine = selectedTool;
       if (!silent) {
         addLog(`${PARTS[selectedTool].name} colocada.`);
@@ -1667,6 +2062,12 @@ function updateRankUI() {
     return;
   }
 
+  if (rank.key === "loopforger") {
+    rankFill.style.width = "100%";
+    rankProgressText.textContent = "rango final";
+    return;
+  }
+
   const span = rank.max - rank.min + 1;
   const inside = Math.max(0, Math.min(span, elo - rank.min));
   const pct = Math.max(4, Math.min(100, Math.floor((inside / span) * 100)));
@@ -1675,8 +2076,8 @@ function updateRankUI() {
 }
 
 function heartMarkup(current, max = 3) {
-  return `<span class="lives-display" aria-label="${current} de ${max} vidas">` +
-    Array.from({ length: max }, (_, i) => `<span class="life-heart ${i < current ? "" : "off"}" title="Vida ${i + 1}"></span>`).join("") +
+  return `<span class="lives-display">` +
+    Array.from({ length: max }, (_, i) => `<span class="life-heart ${i < current ? "" : "off"}"></span>`).join("") +
     `</span>`;
 }
 
@@ -1688,6 +2089,9 @@ function updateHud(status = null) {
 
   if (currentMode === "tutorial") {
     livesText.innerHTML = `<span class="life-heart-label">∞</span>`;
+  } else if (currentMode === "placement") {
+    const done = profile.placementsDone || 0;
+    livesText.innerHTML = `${heartMarkup(lives, 3)}<span class="life-heart-label placement-small"> ${done}/${PLACEMENT_MATCHES}</span>`;
   } else {
     livesText.innerHTML = heartMarkup(lives, 3);
   }
@@ -1697,34 +2101,137 @@ function updateHud(status = null) {
 }
 
 
-function getMissingRequiredMachines() {
+function getPlacedMachineSequence(path = findPath()) {
+  if (!path) return [];
+  const sequence = [];
+  for (const pos of path) {
+    const id = gridState[pos.y]?.[pos.x]?.machine;
+    if (id) sequence.push({ id, x: pos.x, y: pos.y });
+  }
+  return sequence;
+}
+
+function getMissingRequiredMachines(sequence = getPlacedMachineSequence()) {
   const mod = getModifier("requiredMachines");
   if (!mod) return [];
 
-  const placed = new Set();
-  for (let y = 0; y < GRID_H; y++) {
-    for (let x = 0; x < GRID_W; x++) {
-      if (gridState[y][x].machine) placed.add(gridState[y][x].machine);
-    }
-  }
-
+  const placed = new Set(sequence.map(item => item.id));
   return mod.value.filter(id => !placed.has(id));
 }
 
-function validateRankedConditions() {
-  const missing = getMissingRequiredMachines();
-  if (missing.length) {
-    addLog(`Falta usar: ${missing.map(id => PARTS[id].name).join(", ")}.`, "bad");
-    updateHud("Falta máquina requerida");
+function hasAdjacentPair(sequence, pair) {
+  if (!pair) return true;
+  for (let i = 0; i < sequence.length - 1; i++) {
+    if (sequence[i].id === pair[0] && sequence[i + 1].id === pair[1]) return true;
+  }
+  return false;
+}
+
+function requiredMachinesAreMeaningful(sequence) {
+  const mod = getModifier("requiredMachines");
+  if (!mod) return true;
+
+  const ids = mod.value || [];
+  const hasTrickyInverter = ids.includes("inverter");
+  if (hasTrickyInverter) {
+    const count = sequence.filter(item => item.id === "inverter").length;
+    if (count % 2 === 0) {
+      addLog("El Inversor requerido debe afectar el resultado: no puede quedar cancelado por otro inversor.", "bad");
+      updateHud("Inversor cancelado");
+      return false;
+    }
+  }
+
+  const full = sequence.map(item => item.id);
+  const fullResult = evaluateSolution(full, currentLevel.start).total;
+  for (const id of ids) {
+    const without = full.filter(machineId => machineId !== id);
+    if (without.length && evaluateSolution(without, currentLevel.start).total === fullResult) {
+      addLog(`${PARTS[id].name} está puesto, pero no cambia el resultado real. Tiene que importar.`, "bad");
+      updateHud("Máquina requerida de adorno");
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function pathIncludesEnergyGate(path) {
+  const gate = currentLevel.energyGate;
+  if (!gate) return true;
+  const ok = path?.some(p => p.x === gate.x && p.y === gate.y);
+  if (!ok) {
+    addLog(`La cinta tiene que pasar por la zona de presión (${gate.x}, ${gate.y}).`, "bad");
+    updateHud("Falta zona obligatoria");
     return false;
   }
   return true;
 }
 
-async function runFull() {
+function validateRankedConditions() {
+  const path = findPath();
+  const sequence = getPlacedMachineSequence(path);
+  const rules = currentLevel.specialRules || {};
+
+  if (!pathIncludesEnergyGate(path)) return false;
+
+  const missing = getMissingRequiredMachines(sequence);
+  if (missing.length) {
+    addLog(`Falta usar en el recorrido: ${missing.map(id => PARTS[id].name).join(", ")}.`, "bad");
+    updateHud("Falta máquina requerida");
+    return false;
+  }
+
+  if (rules.startWithMachine && sequence[0]?.id !== rules.startWithMachine) {
+    addLog(`La primera máquina después del IN debe ser ${PARTS[rules.startWithMachine].name}.`, "bad");
+    updateHud("Orden obligatorio");
+    return false;
+  }
+
+  if (rules.adjacentPair && !hasAdjacentPair(sequence, rules.adjacentPair)) {
+    const [a, b] = rules.adjacentPair;
+    addLog(`${PARTS[a].name} y ${PARTS[b].name} deben ir pegados en el recorrido.`, "bad");
+    updateHud("Pareja obligatoria");
+    return false;
+  }
+
+  return requiredMachinesAreMeaningful(sequence);
+}
+
+function getEfficiencyEloBonus() {
+  if (!currentLevel || currentMode !== "infinite") return 0;
+  const path = findPath();
+  const used = getPlacedMachineSequence(path).length;
+  const min = currentLevel.minMachines || currentLevel.generatedSolution?.length || used;
+  if (!used || !min) return 0;
+
+  const excess = Math.max(0, used - min);
+  const tightBonus = Math.max(0, 18 - excess * 4);
+  const perfectBonus = used <= min ? 8 : 0;
+  return Math.min(26, tightBonus + perfectBonus);
+}
+
+function resetCurrentWithLifeCost() {
   if (running) return;
 
-  if (!validateRankedConditions()) return;
+  const rankedLike = currentMode === "infinite" || currentMode === "placement";
+  if (rankedLike) {
+    if (resetUses >= MAX_RESET_USES || lives <= 1) {
+      addLog("No podés reiniciar más esta partida: ya consumiste las 2 vidas permitidas.", "bad");
+      updateHud("Sin reinicios");
+      return;
+    }
+    resetUses++;
+    lives--;
+    playSfx("hurt");
+    addLog(`Reiniciar costó 1 vida. Reinicios usados: ${resetUses}/${MAX_RESET_USES}.`, "bad");
+  }
+
+  resetCurrent();
+}
+
+async function runFull() {
+  if (running) return;
 
   if (!validateRankedConditions()) return;
 
@@ -1739,6 +2246,7 @@ async function runFull() {
   currentPath = path;
   running = true;
   stopRequested = false;
+  forcedFailureReason = null;
   updateControlButtons();
   updateHud("Simulando...");
 
@@ -1752,6 +2260,12 @@ async function runFull() {
 
   if (stopRequested) {
     stopRequested = false;
+    if (forcedFailureReason) {
+      addLog(forcedFailureReason, "bad");
+      forcedFailureReason = null;
+      finishLevel();
+      return;
+    }
     updateHud("Simulación detenida");
     addLog("Simulación detenida por el jugador.", "bad");
     saveRun();
@@ -1763,6 +2277,8 @@ async function runFull() {
 
 async function runStep() {
   if (running) return;
+
+  if (!validateRankedConditions()) return;
 
   const path = findPath();
   if (!path) {
@@ -1816,14 +2332,21 @@ async function runCycle(path) {
     const pos = path[i];
     const cell = gridState[pos.y][pos.x];
 
-    await moveOrbToCell(orb, pos.x, pos.y, value);
+    await moveOrbToCell(orb, pos.x, pos.y, value + ctx.bonus);
     activateCell(pos.x, pos.y);
+
+    if (cell.gate && value < cell.gate.minValue) {
+      forcedFailureReason = `La zona de presión pedía ${cell.gate.minValue}+ energía y la bolita llegó con ${value}.`;
+      updateHud("Zona de presión fallida");
+      stopRequested = true;
+      break;
+    }
 
     if (cell.machine) {
       const machine = PARTS[cell.machine];
       const before = value;
       value = machine.apply(value, ctx);
-      orb.textContent = value;
+      orb.textContent = value + ctx.bonus;
       orb.classList.add("hit");
       setTimeout(() => orb.classList.remove("hit"), 120);
       addLog(`${machine.name}: ${machine.log(before, value)}`);
@@ -1833,12 +2356,13 @@ async function runCycle(path) {
     clearActiveCells();
   }
 
-  lastOrbValue = value;
+  lastOrbValue = value + ctx.bonus;
   total += value + ctx.bonus;
+  orb.textContent = value + ctx.bonus;
 
   if (ctx.bonus) addLog(`Bonus de banco: +${ctx.bonus} al total`);
 
-  addLog(`Salida: ${value}. Total acumulado: ${total}`);
+  addLog(`Salida real: ${value + ctx.bonus}. Total acumulado: ${total}`);
   updateHud("Simulando...");
   animateScoreToTotal(value + ctx.bonus, orb);
   await waitScaled(260);
@@ -1967,7 +2491,9 @@ function finishLevel() {
       }
     } else {
       const oldElo = elo;
-      const gain = 24 + Math.floor(elo / 120) + streak * 4;
+      const efficiencyBonus = getEfficiencyEloBonus();
+      const streakBonus = Math.min(STREAK_ELO_CAP, streak * 4);
+      const gain = 24 + Math.floor(elo / 120) + streakBonus + efficiencyBonus;
       elo += gain;
       streak++;
       challengeNumber++;
@@ -1987,7 +2513,7 @@ function finishLevel() {
       pendingUnlocks.push(...newlyUnlocked);
 
       modalTitle.textContent = oldRank.key !== newRank.key ? "🏆 RANGO ASCENDIDO" : "⚡ ELO AUMENTADO";
-      modalText.textContent = `Reto superado. Ganaste +${gain} ELO. Nuevo ELO: ${elo}.`;
+      modalText.textContent = `Reto superado. Ganaste +${gain} ELO (${efficiencyBonus > 0 ? `+${efficiencyBonus} por eficiencia, ` : ""}racha limitada a +${streakBonus}). Nuevo ELO: ${elo}.`;
       setModalActions("SIGUIENTE RETO");
     }
 
@@ -1996,19 +2522,17 @@ function finishLevel() {
     renderTutorialMenu();
   } else {
     addLog(`FALLÓ: ${total}/${currentLevel.target}. Diferencia: ${diff}`, "bad");
+    recordRankedResult(false);
 
     if (currentMode === "placement") {
       lives--;
       playSfx(lives > 0 ? "hurt" : "death");
-      streak = 0;
-
       if (lives > 0) {
         saveRun();
         modalTitle.textContent = "⚠ VIDA PERDIDA";
         modalText.textContent = `Terminaste en ${total}. Objetivo: ${currentLevel.target}. Te quedan ${lives} vidas para esta partida de posicionamiento.`;
-        setModalActions("REINTENTAR RETO");
+        setModalActions("REINTENTAR PARTIDA");
       } else {
-        recordRankedResult(false);
         const order = ensurePlacementOrder();
         profile.placementResults.push({ probe: order[profile.placementsDone] || elo, win: false });
         profile.placementsDone = (profile.placementsDone || 0) + 1;
@@ -2028,7 +2552,7 @@ function finishLevel() {
           setModalActions("ENTRAR A RANKED", { showSecondary: true, secondaryText: "VOLVER AL MENÚ" });
         } else {
           modalTitle.textContent = "⚠ PARTIDA DE POSICIONAMIENTO PERDIDA";
-          modalText.textContent = `Perdiste esta partida de posicionamiento al quedarte sin vidas. Vas ${profile.placementsDone}/${PLACEMENT_MATCHES}. Seguimos con la siguiente.`;
+          modalText.textContent = `Perdiste esta partida. Vas ${profile.placementsDone}/${PLACEMENT_MATCHES}. Seguimos con la siguiente.`;
           setModalActions("SIGUIENTE PARTIDA");
         }
       }
@@ -2036,12 +2560,12 @@ function finishLevel() {
       lives--;
       playSfx(lives > 0 ? "hurt" : "death");
       streak = 0;
+      saveRun();
 
       modalTitle.textContent = lives > 0 ? "⚠ VIDA PERDIDA" : "☠ RUN TERMINADA";
       modalText.textContent = lives > 0
         ? `Terminaste en ${total}. Objetivo: ${currentLevel.target}. Te quedan ${lives} vidas.`
-        : (() => { recordRankedResult(false); return endRunAndLoseElo(); })();
-      if (lives > 0) saveRun();
+        : endRunAndLoseElo();
       setModalActions(lives > 0 ? "REINTENTAR RETO" : "VOLVER AL MENÚ");
     } else {
       modalTitle.textContent = "⚠ INTENTALO DE NUEVO";
@@ -2140,6 +2664,7 @@ function clearFactory() {
   if (running) return;
   gridState = emptyGrid();
   applyBlockedCells(currentLevel);
+  applyEnergyGates(currentLevel);
   resetCurrent();
   renderGame();
   addLog("Fábrica vaciada.");
@@ -2150,6 +2675,7 @@ function buildSample() {
   if (running) return;
   gridState = emptyGrid();
   applyBlockedCells(currentLevel);
+  applyEnergyGates(currentLevel);
 
   let x = INPUT.x;
   let y = INPUT.y;
@@ -2429,7 +2955,7 @@ runBtn.addEventListener("click", runFull);
 stopBtn.addEventListener("click", requestStop);
 speedBtn.addEventListener("click", cycleSpeed);
 if (stepBtn) stepBtn.addEventListener("click", runStep);
-resetBtn.addEventListener("click", resetCurrent);
+resetBtn.addEventListener("click", resetCurrentWithLifeCost);
 clearBtn.addEventListener("click", clearFactory);
 if (sampleBtn) sampleBtn.addEventListener("click", buildSample);
 
@@ -2471,11 +2997,6 @@ modalNextBtn.addEventListener("click", () => {
     return;
   }
 
-  if (modalNextBtn.textContent === "REINTENTAR RETO") {
-    resetCurrent();
-    return;
-  }
-
   if (currentMode === "placement") {
     if (profile.placementComplete) {
       currentMode = "infinite";
@@ -2488,6 +3009,11 @@ modalNextBtn.addEventListener("click", () => {
 
   if (lives <= 0) {
     showScreen("mainMenu");
+    return;
+  }
+
+  if (modalNextBtn.textContent === "REINTENTAR RETO") {
+    resetCurrent();
     return;
   }
 
