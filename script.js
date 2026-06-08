@@ -330,6 +330,10 @@ const speedBtn = document.getElementById("speedBtn");
 const stepBtn = document.getElementById("stepBtn");
 const resetBtn = document.getElementById("resetBtn");
 const clearBtn = document.getElementById("clearBtn");
+const surrenderBtn = document.getElementById("surrenderBtn");
+const surrenderConfirmModal = document.getElementById("surrenderConfirmModal");
+const surrenderCancelBtn = document.getElementById("surrenderCancelBtn");
+const surrenderConfirmBtn = document.getElementById("surrenderConfirmBtn");
 
 const unlockModal = document.getElementById("unlockModal");
 const unlockMachineSprite = document.getElementById("unlockMachineSprite");
@@ -562,7 +566,24 @@ function renderLeaderboardRows(rows) {
   `).join("");
 }
 
+function isUnrankedLeaderboardRow(row = {}) {
+  if (row.isYou && !profile.placementComplete) return true;
+  if (row.placementComplete === false) return true;
+  if (row.isPlacement === true || row.unranked === true) return true;
+  const rankName = String(row.rank || row.rankName || "").toLowerCase();
+  return rankName === "unranked" || rankName === "sin rango" || rankName === "posicionamiento";
+}
+
 function leaderboardRankHtml(row) {
+  if (isUnrankedLeaderboardRow(row)) {
+    return `
+      <span class="leaderboard-rank-icon rank-unranked" title="Unranked">
+        <span class="leaderboard-unranked-mark">?</span>
+        <small>Unranked</small>
+      </span>
+    `;
+  }
+
   const numericElo = Number(row.elo || row.rating || row.score || 0);
   const rank = numericElo ? getRankInfo(numericElo) : getRankFromName(row.rank);
   const eloLine = rank.key === "loopforger" && numericElo ? `<small>${numericElo} ELO</small>` : "";
@@ -1345,10 +1366,12 @@ function createSpecialRulesForElo(value, available) {
 }
 
 function makeEnergyGate(pos, solution, start, sourceElo) {
-  const prefixLen = Math.max(1, Math.floor(solution.length * 0.55));
-  const prefixValue = evaluateSolution(solution.slice(0, prefixLen), start).value;
-  const minValue = Math.max(1, prefixValue - (sourceElo >= 1500 ? 1 : 3));
-  return { x: pos.x, y: pos.y, minValue };
+  // Casilla opcional de energía: no es condición de victoria.
+  // Sirve como recurso táctico: si el camino pasa por acá, suma energía a la bolita.
+  const base = sourceElo >= 2000 ? 7 : sourceElo >= 1500 ? 6 : sourceElo >= 1100 ? 5 : sourceElo >= 800 ? 4 : 3;
+  const swing = sourceElo >= 1500 ? rand(0, 3) : rand(0, 2);
+  const value = base + swing;
+  return { x: pos.x, y: pos.y, value, label: `+${value}` };
 }
 
 function findMinimumMachineCount({ available, start, targetPerCycle, maxMachines, specialRules = {} }) {
@@ -1527,8 +1550,8 @@ function getModifiersForElo(value, layout, specialRules = {}, machineLimit = get
     mods.push({
       type: "energyGate",
       value: energyGate,
-      name: `Zona de presión ≥ ${energyGate.minValue}`,
-      desc: "La cinta debe pasar por la zona brillante con esa energía o más."
+      name: `Casilla de energía ${energyGate.label || `+${energyGate.value || 0}`}`,
+      desc: "Opcional: si la bolita pasa por esa casilla, suma esa energía. No es obligatoria para resolver."
     });
   }
 
@@ -1539,70 +1562,6 @@ function getModifiersForElo(value, layout, specialRules = {}, machineLimit = get
       name: `Solución mínima: ${minimum}`,
       desc: "Resolver cerca de este mínimo da más ELO."
     });
-  }
-
-  if (value >= 2000) {
-    mods.push({
-      type: "tightPath",
-      value: true,
-      name: "Mapa compacto",
-      desc: "Menos espacio, más precisión."
-    });
-  }
-
-  return mods;
-}
-
-function getModifiersForElo(value, layout) {
-  const mods = [];
-
-  if (value >= 550) {
-    const manhattan = Math.abs(layout.output.x - layout.input.x) + Math.abs(layout.output.y - layout.input.y) + 1;
-    const extra = value >= 1500 ? 5 : value >= 1100 ? 7 : 9;
-    mods.push({
-      type: "maxBelts",
-      value: manhattan + extra,
-      name: `Máximo ${manhattan + extra} cintas`,
-      desc: "El mapa se ajustó para que sea posible."
-    });
-  }
-
-  if (value >= 800) {
-    mods.push({
-      type: "blockedCells",
-      value: layout.blockedCells.length,
-      name: `${layout.blockedCells.length} casillas bloqueadas`,
-      desc: "No se puede construir ahí."
-    });
-  }
-
-  if (value >= 1500) {
-    mods.push({
-      type: "maxMachines",
-      value: 8,
-      name: "Máximo 8 máquinas",
-      desc: "Elegí bien qué colocar."
-    });
-  }
-
-  if (value >= 550) {
-    const pool = getUnlockedMachineIds(value).filter(id => !["stabilizer"].includes(id));
-    const requiredCount = value >= 1500 ? 2 : 1;
-    const required = [];
-
-    while (required.length < requiredCount && pool.length > 0) {
-      const id = pool.splice(rand(0, pool.length - 1), 1)[0];
-      required.push(id);
-    }
-
-    if (required.length) {
-      mods.push({
-        type: "requiredMachines",
-        value: required,
-        name: required.length === 1 ? `Usar ${PARTS[required[0]].name}` : `Usar ${required.map(id => PARTS[id].name).join(" + ")}`,
-        desc: "El reto exige incluir esta máquina en tu fábrica."
-      });
-    }
   }
 
   if (value >= 2000) {
@@ -1752,7 +1711,7 @@ function renderModifiers() {
   }
 
   const mods = currentLevel.modifiers && currentLevel.modifiers.length
-    ? currentLevel.modifiers.map(m => `<div class="modifier-chip ${["requiredMachines", "startWithMachine", "adjacentPair", "energyGate"].includes(m.type) ? "required" : ""}"><b>${m.name}</b><br>${m.desc}</div>`)
+    ? currentLevel.modifiers.map(m => `<div class="modifier-chip ${["requiredMachines", "startWithMachine", "adjacentPair"].includes(m.type) ? "required" : ""}"><b>${m.name}</b><br>${m.desc}</div>`)
     : [`<div class="modifier-chip empty">Sin modificadores especiales.</div>`];
 
   modifierBox.innerHTML = [...core, ...mods].join("");
@@ -1809,7 +1768,11 @@ function renderGrid() {
       const isOutput = x === OUTPUT.x && y === OUTPUT.y;
 
       if (state.blocked) cell.classList.add("blocked");
-      if (state.gate) cell.classList.add("energy-gate");
+      if (state.gate) {
+        cell.classList.add("energy-gate");
+        const gateValue = Number(state.gate.value ?? state.gate.bonus ?? 0);
+        cell.dataset.gateLabel = `⚡ ${gateValue >= 0 ? "+" : ""}${gateValue}`;
+      }
       if (state.belt) cell.classList.add("belt");
       if (state.machine) cell.classList.add("machine-cell");
       if (isInput) {
@@ -1854,6 +1817,14 @@ function renderGrid() {
 function applyTool(x, y, silent = false) {
   if (running) return;
 
+  if (cycle > 0) {
+    if (!silent) {
+      addLog("Reiniciá la simulación antes de editar la fábrica.", "bad");
+      updateHud("Reiniciá para editar");
+    }
+    return;
+  }
+
   const isInput = x === INPUT.x && y === INPUT.y;
   const isOutput = x === OUTPUT.x && y === OUTPUT.y;
   const cell = gridState[y][x];
@@ -1875,9 +1846,15 @@ function applyTool(x, y, silent = false) {
     if (!silent) addLog("Cinta colocada.");
   } else if (selectedTool === "eraser") {
     if (!isInput && !isOutput) {
-      cell.belt = false;
-      cell.machine = null;
-      if (!silent) addLog("Casilla borrada.");
+      if (cell.machine) {
+        cell.machine = null;
+        if (!silent) addLog("Máquina borrada. La cinta queda puesta.");
+      } else if (cell.belt) {
+        cell.belt = false;
+        if (!silent) addLog("Cinta borrada.");
+      } else if (!silent) {
+        addLog("La casilla ya está vacía.");
+      }
     }
   } else if (PARTS[selectedTool]) {
     if (!isInput && !isOutput) {
@@ -2026,6 +2003,7 @@ function spawnMenuParticles() {
 }
 
 function getRankBadgeSrc(rank) {
+  if (!rank || rank.key === "unranked") return "assets/ranks/iron.png";
   return `assets/ranks/${rank.key}.png`;
 }
 
@@ -2047,7 +2025,7 @@ function updateRankUI() {
   rankCard.className = `rank-card ${rank.cls}`;
   rankName.textContent = rank.name;
   if (hudRankBadge) hudRankBadge.src = getRankBadgeSrc(rank);
-  eloText.textContent = currentMode === "tutorial" ? "TUT" : currentMode === "placement" || !profile.placementComplete ? "?" : elo;
+  eloText.textContent = currentMode === "tutorial" ? "TUT" : currentMode === "placement" || !profile.placementComplete ? "?" : (rank.key === "loopforger" ? "∞" : elo);
 
   if (currentMode === "tutorial") {
     rankFill.style.width = "100%";
@@ -2063,8 +2041,8 @@ function updateRankUI() {
   }
 
   if (rank.key === "loopforger") {
-    rankFill.style.width = "100%";
-    rankProgressText.textContent = "rango final";
+    rankFill.style.width = "0%";
+    rankProgressText.textContent = `${elo} ELO`;
     return;
   }
 
@@ -2157,14 +2135,7 @@ function requiredMachinesAreMeaningful(sequence) {
 }
 
 function pathIncludesEnergyGate(path) {
-  const gate = currentLevel.energyGate;
-  if (!gate) return true;
-  const ok = path?.some(p => p.x === gate.x && p.y === gate.y);
-  if (!ok) {
-    addLog(`La cinta tiene que pasar por la zona de presión (${gate.x}, ${gate.y}).`, "bad");
-    updateHud("Falta zona obligatoria");
-    return false;
-  }
+  // Las casillas de energía son bonus opcionales, no condiciones obligatorias.
   return true;
 }
 
@@ -2335,11 +2306,17 @@ async function runCycle(path) {
     await moveOrbToCell(orb, pos.x, pos.y, value + ctx.bonus);
     activateCell(pos.x, pos.y);
 
-    if (cell.gate && value < cell.gate.minValue) {
-      forcedFailureReason = `La zona de presión pedía ${cell.gate.minValue}+ energía y la bolita llegó con ${value}.`;
-      updateHud("Zona de presión fallida");
-      stopRequested = true;
-      break;
+    if (cell.gate) {
+      const gateBonus = Number(cell.gate.value ?? cell.gate.bonus ?? 0);
+      if (gateBonus) {
+        const beforeGate = value;
+        value += gateBonus;
+        orb.textContent = value + ctx.bonus;
+        orb.classList.add("hit");
+        setTimeout(() => orb.classList.remove("hit"), 120);
+        addLog(`Casilla de energía: ${beforeGate} ${gateBonus >= 0 ? "+" : ""}${gateBonus} = ${value}`);
+        await waitScaled(120);
+      }
     }
 
     if (cell.machine) {
@@ -2522,7 +2499,6 @@ function finishLevel() {
     renderTutorialMenu();
   } else {
     addLog(`FALLÓ: ${total}/${currentLevel.target}. Diferencia: ${diff}`, "bad");
-    recordRankedResult(false);
 
     if (currentMode === "placement") {
       lives--;
@@ -2533,6 +2509,7 @@ function finishLevel() {
         modalText.textContent = `Terminaste en ${total}. Objetivo: ${currentLevel.target}. Te quedan ${lives} vidas para esta partida de posicionamiento.`;
         setModalActions("REINTENTAR PARTIDA");
       } else {
+        recordRankedResult(false);
         const order = ensurePlacementOrder();
         profile.placementResults.push({ probe: order[profile.placementsDone] || elo, win: false });
         profile.placementsDone = (profile.placementsDone || 0) + 1;
@@ -2563,9 +2540,12 @@ function finishLevel() {
       saveRun();
 
       modalTitle.textContent = lives > 0 ? "⚠ VIDA PERDIDA" : "☠ RUN TERMINADA";
-      modalText.textContent = lives > 0
-        ? `Terminaste en ${total}. Objetivo: ${currentLevel.target}. Te quedan ${lives} vidas.`
-        : endRunAndLoseElo();
+      if (lives > 0) {
+        modalText.textContent = `Terminaste en ${total}. Objetivo: ${currentLevel.target}. Te quedan ${lives} vidas.`;
+      } else {
+        recordRankedResult(false);
+        modalText.textContent = endRunAndLoseElo();
+      }
       setModalActions(lives > 0 ? "REINTENTAR RETO" : "VOLVER AL MENÚ");
     } else {
       modalTitle.textContent = "⚠ INTENTALO DE NUEVO";
@@ -2708,6 +2688,58 @@ function buildSample() {
   saveRun();
 }
 
+function openSurrenderConfirm() {
+  if (!surrenderConfirmModal || running || currentMode === "tutorial") return;
+  surrenderConfirmModal.classList.remove("hidden");
+}
+
+function closeSurrenderConfirm() {
+  surrenderConfirmModal?.classList.add("hidden");
+}
+
+function surrenderCurrentRun() {
+  if (running || currentMode === "tutorial") return;
+  closeSurrenderConfirm();
+  playSfx("death");
+  addLog("Te rendiste. La run se cuenta como derrota.", "bad");
+  recordRankedResult(false);
+
+  if (currentMode === "placement") {
+    const order = ensurePlacementOrder();
+    profile.placementResults.push({ probe: order[profile.placementsDone] || elo, win: false, surrendered: true });
+    profile.placementsDone = (profile.placementsDone || 0) + 1;
+    lives = 0;
+    clearSavedRun();
+
+    if (profile.placementsDone >= PLACEMENT_MATCHES) {
+      profile.placementComplete = true;
+      elo = calculatePlacementElo();
+      profile.elo = elo;
+      profile.bestElo = Math.max(profile.bestElo || 100, elo);
+      profile.lossStreak = 0;
+      saveProfile();
+
+      modalTitle.textContent = "🏁 POSICIONAMIENTO COMPLETO";
+      modalText.textContent = `Te rendiste en la última partida de posicionamiento. Tu ELO inicial quedó en ${elo}.`;
+      setModalActions("ENTRAR A RANKED", { showSecondary: true, secondaryText: "VOLVER AL MENÚ" });
+    } else {
+      saveProfile();
+      modalTitle.textContent = "⚠ PARTIDA DE POSICIONAMIENTO RENDIDA";
+      modalText.textContent = `Perdiste esta partida por rendición. Vas ${profile.placementsDone}/${PLACEMENT_MATCHES}.`;
+      setModalActions("SIGUIENTE PARTIDA");
+    }
+  } else {
+    lives = 0;
+    streak = 0;
+    modalTitle.textContent = "☠ RUN RENDIDA";
+    modalText.textContent = endRunAndLoseElo();
+    setModalActions("VOLVER AL MENÚ");
+  }
+
+  updateHud("Rendición confirmada");
+  modal.classList.remove("hidden");
+}
+
 function requestStop() {
   if (!running) return;
   stopRequested = true;
@@ -2729,6 +2761,7 @@ function updateControlButtons() {
   if (stepBtn) stepBtn.disabled = running;
   resetBtn.disabled = running;
   clearBtn.disabled = running;
+  if (surrenderBtn) surrenderBtn.disabled = running || currentMode === "tutorial";
   if (sampleBtn) sampleBtn.disabled = running;
   stopBtn.disabled = !running;
 }
@@ -2957,6 +2990,9 @@ speedBtn.addEventListener("click", cycleSpeed);
 if (stepBtn) stepBtn.addEventListener("click", runStep);
 resetBtn.addEventListener("click", resetCurrentWithLifeCost);
 clearBtn.addEventListener("click", clearFactory);
+if (surrenderBtn) surrenderBtn.addEventListener("click", openSurrenderConfirm);
+if (surrenderCancelBtn) surrenderCancelBtn.addEventListener("click", closeSurrenderConfirm);
+if (surrenderConfirmBtn) surrenderConfirmBtn.addEventListener("click", surrenderCurrentRun);
 if (sampleBtn) sampleBtn.addEventListener("click", buildSample);
 
 coachCloseBtn.addEventListener("click", () => {

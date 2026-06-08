@@ -3120,7 +3120,7 @@ button {
 }
 
 .cell.energy-gate::before {
-  content: "⚡";
+  content: attr(data-gate-label);
   position: absolute;
   inset: 5px;
   display: grid;
@@ -3128,8 +3128,11 @@ button {
   border: 2px dashed rgba(66,255,224,.75);
   border-radius: 10px;
   color: var(--neon);
-  font-size: 18px;
+  font-size: 12px;
+  line-height: 1;
   font-weight: 900;
+  letter-spacing: .2px;
+  text-shadow: 0 0 8px rgba(66,255,224,.55);
   z-index: 4;
   pointer-events: none;
 }
@@ -3172,7 +3175,7 @@ button {
   width: 46px;
   height: 46px;
   object-fit: contain;
-  filter: drop-shadow(0 0 10px rgba(255,255,255,.15));
+  filter: none;
 }
 
 .leaderboard-rank-icon small {
@@ -3199,5 +3202,100 @@ button {
   .leaderboard-rank-icon {
     justify-self: start;
     align-items: flex-start;
+  }
+}
+
+
+/* V29 Leaderboard rank clarity */
+.leaderboard-rank-icon.rank-loopforger img {
+  filter: none !important;
+}
+
+.leaderboard-rank-icon.rank-loopforger small {
+  font-size: 10px;
+  color: var(--text);
+  opacity: .92;
+  letter-spacing: .2px;
+}
+
+/* V29 HUD Loopforger: final rank, ELO readable under the rank instead of a progress bar. */
+.rank-card.rank-loopforger .rank-bar {
+  display: none !important;
+}
+
+.rank-card.rank-loopforger .rank-bottom {
+  display: flex !important;
+  justify-content: flex-end;
+  margin-top: 2px;
+  color: var(--neon);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: .6px;
+}
+
+.rank-card.rank-loopforger .rank-top b {
+  max-width: 42px;
+  color: var(--neon);
+  font-size: 22px !important;
+}
+
+
+/* V0.29 - surrender + unranked leaderboard polish */
+.game-btn.surrender {
+  background: linear-gradient(180deg, #ff405f, #8f1630);
+  color: white;
+}
+
+.game-btn.surrender:disabled {
+  opacity: .48;
+  cursor: not-allowed;
+  filter: grayscale(.25);
+}
+
+.surrender-card {
+  border-color: #ff5570;
+  box-shadow: 0 0 0 6px rgba(0,0,0,.25), 0 0 70px rgba(255,85,112,.20);
+}
+
+.surrender-card h2 {
+  color: #ff5570;
+}
+
+.menu-btn.danger-confirm {
+  background: linear-gradient(180deg, #ff5570, #9e1f43);
+  color: white;
+}
+
+.leaderboard-rank-icon.rank-unranked {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: var(--muted);
+}
+
+.leaderboard-rank-icon.rank-unranked img {
+  display: none;
+}
+
+.leaderboard-unranked-mark {
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  display: inline-grid;
+  place-items: center;
+  background: #111526;
+  border: 2px dashed #65708f;
+  color: #dce7ff;
+  font-weight: 900;
+}
+
+@media (max-width: 900px) {
+  .control-left,
+  .control-right {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
   }
 }

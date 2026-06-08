@@ -214,6 +214,7 @@
                 <button id="stopBtn" class="game-btn stop" disabled>PARAR</button>
                 <button id="resetBtn" class="game-btn">REINICIAR</button>
                 <button id="clearBtn" class="game-btn danger">VACIAR</button>
+                <button id="surrenderBtn" class="game-btn surrender">RENDIRSE</button>
               </div>
 
               <div class="control-right">
@@ -258,6 +259,17 @@
     </section>
 
     <div id="scoreFlyLayer" class="score-fly-layer"></div>
+    <div id="surrenderConfirmModal" class="modal hidden surrender-modal">
+      <div class="modal-card surrender-card">
+        <h2>¿Rendirse?</h2>
+        <p>Si confirmás, perdés automáticamente esta run. No consume solo una vida: cuenta como derrota completa.</p>
+        <div class="modal-buttons">
+          <button id="surrenderCancelBtn" class="menu-btn">CANCELAR</button>
+          <button id="surrenderConfirmBtn" class="menu-btn danger-confirm">SÍ, RENDIRME</button>
+        </div>
+      </div>
+    </div>
+
 
     <div id="unlockModal" class="modal hidden">
       <div class="modal-card unlock-card">
